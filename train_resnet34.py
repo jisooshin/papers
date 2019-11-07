@@ -41,6 +41,7 @@ if os.path.isdir(ARGS.base_path):
 else:
   os.makedirs(ARGS.base_path)
 
+device = torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu')
 transform = transforms.Compose(
     [transforms.Pad(padding=(2, 2, 2, 2)), 
      transforms.RandomCrop(size=32),
@@ -51,21 +52,15 @@ transform = transforms.Compose(
        mean=(0.5, 0.5, 0.5), std=(0.5, 0.5, 0.5))])
 train = torchvision.datasets.CIFAR100(
   root=ARGS.base_path + '/data', train=True, download=True, transform=transform) 
-"""
-test = torchvision.datasets.CIFAR100(
-  root=ARGS.base_path + '/data', train=False, download=True, transform=transform) 
-"""
 trainlist = torch.utils.data.random_split(train, [40000, 10000])
 train, val = trainlist[0], trainlist[1]
 trainloader = torch.utils.data.DataLoader(
   train, batch_size=ARGS.batch_size, shuffle=True, num_workers=0)
 valloader = torch.utils.data.DataLoader(
   val, batch_size=ARGS.batch_size, shuffle=True, num_workers=0)
-"""
-testloader = torch.utils.data.DataLoader(
-  test, batch_size=ARGS.batch_size, shuffle=True, num_workers=0)
-"""
+
 net = resnet34.ResNet34()
+net = net.to(device)
 criterion = nn.CrossEntropyLoss()
 optimizer = optim.Adam(params=net.parameters())
 
@@ -81,40 +76,55 @@ if ARGS.check.upper() == 'TRUE':
   # NOTE:
   #print("# of running features(powered by batch size):{}".format(10)) 
 else:
-  writer = SummaryWriter(log_dir=ARGS.base_path + 'logs/{}'.format(ARGS.name))
+  writer = SummaryWriter(log_dir=ARGS.base_path + '/logs/{}'.format(ARGS.name))
+  
   # Early Stopping
   max_patience = ARGS.patience
   patience = 0
-  
+  global_steps = 0
+
   for epoch in range(ARGS.max_epoch):
     running_loss = 0.
     early_metrics = []
     min_value = 0.
     for i, data in enumerate(trainloader):
+      global_steps += 1
+
       if patience >= max_patience:
         print("Early Stopping.")
         break
       else:
         inputs, labels = data
+        inputs, labels = inputs.to(device), labels.to(device)
         optimizer.zero_grad()
         logits = net(inputs)
         loss = criterion(logits, labels)
         loss.backward()
         optimizer.step()
         running_loss += loss.item()
-
+        
         if i % ARGS.verbose == (ARGS.verbose - 1):
           val_inputs, val_labels = next(iter(valloader))
-          val_logits = net(val_inputs)
+
+          # Memory allocate to validate
+          val_inputs, val_labels = val_inputs.to('cpu'), val_labels.to('cpu')
+          val_net = resnet34.ResNet34()
+          val_net = val_net.to('cpu')
+          val_net.load_state_dict(net.state_dict())
+          val_logits = val_net(val_inputs)
           val_loss = criterion(val_logits, val_labels)
+          val_loss = val_loss.item() / ARGS.batch_size
           train_correct_case = (logits.max(dim=1)[1] == labels).sum()
           val_correct_case = (val_logits.max(dim=1)[1] == val_labels).sum()
           print("train", logits.max(dim=1)[1], labels, "\nval", val_logits.max(dim=1)[1], val_labels)
+
           all_case = val_labels.shape[0]
           train_accuracy = (train_correct_case.item()/all_case)
           val_accuracy = (val_correct_case.item()/all_case)
-          train_loss = running_loss / ((i + 1) * ARGS.batch_size)
-          global_steps = ((epoch + 1) * i) + 1
+          train_loss = running_loss / (i + 1) # NOTE: Scale numerator and denominator.
+        
+          # NOTE: To keep memory usage
+          del inputs, labels, val_inputs, val_labels
 
           # Early stop: have to select metric to apply early stopping method.
           _metric = train_loss
@@ -128,7 +138,6 @@ else:
             min_value = min(early_metrics)
             early_metrics.sort() # Sort ascending
             early_metrics = early_metrics[:2]
-
           else:
             print("Error occured.")
             break
@@ -151,4 +160,11 @@ else:
           writer.add_scalar(
             tag='val accuracy',
             scalar_value=val_accuracy, global_step=global_steps)
+           
+          running_loss = 0.
+    torch.save({
+      'epoch': epoch,
+      'model_state_dict': net.state_dict(),
+      'optimizer_state_dict': optimizer.state_dict(),
+      'loss': loss}, ARGS.base_path + "/{}_{}.pt".format(epoch, ARGS.name))    
   print("Finish.")
