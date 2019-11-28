@@ -42,9 +42,13 @@ class ResNet34(nn.Module):
     
   def forward(self, x):
     def _list_to_layer(x, num_layers, conv_obj, batchnorm_obj):
+      conv_module_list = nn.ModuleList(
+        [conv_obj for i in range(num_layers)])
+      batchnorm_module_list = nn.ModuleList(
+       [batchnorm_obj for i in range(num_layers)])
       for i in range(num_layers):
-        x = conv_obj(x)
-        x = batchnorm_obj(x)
+        x = conv_module_list[i](x)
+        x = batchnorm_module_list[i](x)
         x = F.relu(x)
       return x
     

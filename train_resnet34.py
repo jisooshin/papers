@@ -1,3 +1,4 @@
+#-*- coding:utf-8 -*-
 import os
 import sys
 import argparse
@@ -19,8 +20,11 @@ parser.add_argument(
   '--base_path', type=str, default=os.environ['HOME'] + '/cifar100',
   help='Base path for tensorboard events file and learned model parameters.')
 parser.add_argument(
-  '--batch_size', type=int,
-  help='Batch size of the feeded data.', default=100)
+  '--train_batch', type=int,
+  help='Batch size of the training data.', default=100)
+parser.add_argument(
+  '--val_batch', type=int,
+  help='Batch size of the validation data.', default=100)
 parser.add_argument(
   '--max_epoch', type=int, default=10, 
   help='Max epoch.')
@@ -55,9 +59,9 @@ train = torchvision.datasets.CIFAR100(
 trainlist = torch.utils.data.random_split(train, [40000, 10000])
 train, val = trainlist[0], trainlist[1]
 trainloader = torch.utils.data.DataLoader(
-  train, batch_size=ARGS.batch_size, shuffle=True, num_workers=0)
+  train, batch_size=ARGS.train_batch, shuffle=True, num_workers=0)
 valloader = torch.utils.data.DataLoader(
-  val, batch_size=ARGS.batch_size, shuffle=True, num_workers=0)
+  val, batch_size=ARGS.val_batch, shuffle=True, num_workers=0)
 
 net = resnet34.ResNet34()
 net = net.to(device)
@@ -101,7 +105,7 @@ else:
         loss = criterion(logits, labels)
         loss.backward()
         optimizer.step()
-        running_loss += loss.item()
+        # running_loss += loss.item()
         
         if i % ARGS.verbose == (ARGS.verbose - 1):
           val_inputs, val_labels = next(iter(valloader))
@@ -113,16 +117,16 @@ else:
           val_net.load_state_dict(net.state_dict())
           val_logits = val_net(val_inputs)
           val_loss = criterion(val_logits, val_labels)
-          val_loss = val_loss.item() / ARGS.batch_size
+          val_loss = val_loss.item() / ARGS.val_batch
           train_correct_case = (logits.max(dim=1)[1] == labels).sum()
           val_correct_case = (val_logits.max(dim=1)[1] == val_labels).sum()
-          print("train", logits.max(dim=1)[1], labels, "\nval", val_logits.max(dim=1)[1], val_labels)
+          # print("train", logits.max(dim=1)[1], labels, "\nval", val_logits.max(dim=1)[1], val_labels)
 
           all_case = val_labels.shape[0]
           train_accuracy = (train_correct_case.item()/all_case)
           val_accuracy = (val_correct_case.item()/all_case)
-          train_loss = running_loss / (i + 1) # NOTE: Scale numerator and denominator.
-        
+          train_loss = loss.item() / ARGS.train_batch
+
           # NOTE: To keep memory usage
           del inputs, labels, val_inputs, val_labels
 
@@ -146,7 +150,7 @@ else:
             'Epoch[{}] Step[{}]:'.format(epoch + 1, global_steps), '\n\t',
             '[train loss]: {0:.3f}'.format(train_loss), '\n\t',
             '[train accuracy]: {0:.3f}'.format(train_accuracy), '\n\t',
-            '[val loss]: {0:.3f}'.format(val_loss.item()), '\n\t',
+            '[val loss]: {0:.3f}'.format(val_loss), '\n\t',
             '[val accuracy]: {0:.3f}'.format(val_accuracy))
           writer.add_scalar(
             tag='train loss', 
